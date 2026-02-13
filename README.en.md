@@ -27,7 +27,8 @@ Single-page static app (HTML/CSS/JS, zero dependencies) served via a fully conta
 
               +---------------+
               |   certbot     |   certbot/certbot
-              | renewal loop  |   webroot challenge, every 12h
+              | conditional   |   self-disables when CF active
+              | auto-renewal  |   auto-issues + renews LE certs
               +---------------+
 ```
 
@@ -53,7 +54,7 @@ The edge container uses a browser-trusted Let's Encrypt certificate. Certbot han
 |---------|-------|------|-------|
 | `palflow` | nginx:alpine (custom) | Static site server | Internal :80 only |
 | `edge` | nginx:alpine (custom) | TLS termination + reverse proxy | 0.0.0.0:80, 0.0.0.0:443 |
-| `certbot` | certbot/certbot | Let's Encrypt renewal loop | None |
+| `certbot` | certbot/certbot | Conditional LE auto-issuance + renewal | None |
 
 The edge container binds to `0.0.0.0` (all interfaces) on ports 80 and 443 because it is the public-facing entrypoint. Port 80 must be reachable from the internet for ACME challenges and HTTP-to-HTTPS redirects. Port 443 serves all HTTPS traffic. The palflow container has no published ports — it is only reachable by edge via Docker's internal network.
 
@@ -156,25 +157,30 @@ On first deploy, no TLS certificate exists yet. The edge container needs to be r
 ALLOW_SELF_SIGNED=1 docker compose up -d --build
 ```
 
-### 3. Issue Let's Encrypt certificate
+The certbot service will automatically attempt first issuance once edge is healthy. If DNS is correctly pointed and port 80 is reachable, the certificate is issued automatically and edge reloads with the real cert — no manual steps needed.
+
+Check certbot logs to confirm:
 
 ```bash
+docker compose logs certbot
+```
+
+If auto-issuance fails (DNS not pointed yet, port 80 blocked), certbot logs the exact manual command and exits. Fix the issue, then either restart certbot or issue manually:
+
+```bash
+# Option A: restart certbot to retry auto-issuance
+docker compose restart certbot
+
+# Option B: issue manually
 docker compose run --rm certbot certonly \
     --webroot -w /var/www/certbot \
     -d $PALFLOW_DOMAIN \
     --email $LETSENCRYPT_EMAIL \
     --agree-tos --no-eff-email
-```
-
-### 4. Restart edge with real cert
-
-```bash
 docker compose restart edge
 ```
 
-Edge will detect the new Let's Encrypt certificate and use it automatically.
-
-### 5. Verify
+### 3. Verify
 
 ```bash
 curl -sI https://palflow.example.com | head -5
@@ -237,7 +243,24 @@ docker compose restart edge
 
 ## Certificate Renewal
 
-The `certbot` service runs a renewal loop every 12 hours. When a certificate is actually renewed, certbot's `--deploy-hook` touches a flag file. The edge container polls this file every 5 seconds and reloads nginx when it detects a change. No Docker socket access is required.
+The `certbot` service is conditional — it only runs when Let's Encrypt is the active TLS provider.
+
+**Behavior by TLS mode:**
+
+| TLS_MODE | Cloudflare cert valid? | Certbot behavior |
+|----------|----------------------|------------------|
+| `cloudflare` | any | Exits immediately (not needed) |
+| `auto` | yes | Exits immediately (CF takes priority) |
+| `auto` | no | Manages LE: auto-issues if missing, renews every 12h |
+| `letsencrypt` | any | Manages LE: auto-issues if missing, renews every 12h |
+
+Certbot detects the active provider using the same filesystem checks as edge (openssl certificate validation). When Cloudflare is active, certbot exits with code 0 and the `restart: on-failure` policy keeps it off. No wasted resources.
+
+When Let's Encrypt is active, certbot runs a renewal loop every 12 hours. On successful renewal, the `--deploy-hook` touches a flag file. The edge container polls this file every 5 seconds and reloads nginx when it detects a change. No Docker socket access is required.
+
+**First issuance:** If no LE certificates exist, certbot performs a dry-run validation first (uses LE staging servers, no rate-limit risk). If the dry-run passes, it issues the real certificate and signals edge to reload. If the dry-run fails (DNS not pointed, port 80 blocked), certbot logs instructions and exits cleanly.
+
+**Edge healthcheck:** Certbot waits for edge to pass its healthcheck (`depends_on: condition: service_healthy`) before attempting any ACME operations. This replaces the previous fixed 30-second sleep with a deterministic readiness gate.
 
 The flag file path mapping:
 
@@ -248,8 +271,6 @@ The flag file path mapping:
 | edge container | `/etc/letsencrypt/.reload-flag` |
 
 Both containers mount `./certs/letsencrypt:/etc/letsencrypt`, so the flag file is the same physical file accessed via the shared volume.
-
-This happens automatically with no manual intervention.
 
 ## Environment Variables
 
@@ -278,7 +299,7 @@ palflow/
 │   ├── entrypoint.sh          # Cert selection + template render + nginx exec
 │   └── nginx.template.conf    # Nginx config template (envsubst)
 ├── certbot/
-│   └── renew.sh               # Renewal loop (every 12h, deploy-hook)
+│   └── renew.sh               # Conditional LE management (detect, issue, renew)
 ├── certs/
 │   ├── cloudflare/            # User-placed CF Origin cert (fullchain.pem, privkey.pem)
 │   └── letsencrypt/           # Certbot-managed LE certs (auto-populated)
@@ -319,7 +340,9 @@ docker compose ps
 docker compose restart edge
 ```
 
-### Issue Let's Encrypt cert (first time)
+### Issue Let's Encrypt cert (manual fallback)
+
+Certbot auto-issues on first startup if DNS and port 80 are ready. If auto-issuance failed, issue manually:
 
 ```bash
 docker compose run --rm certbot certonly \
@@ -378,9 +401,21 @@ Stop any existing web server on the host:
 sudo systemctl stop nginx apache2 2>/dev/null
 ```
 
-### Certbot challenge fails
+### Certbot exits immediately
 
-Ensure DNS for your domain points to the server and port 80 is reachable from the internet. The edge container must be running (use `ALLOW_SELF_SIGNED=1` for bootstrap).
+Expected when Cloudflare is the active TLS provider. Certbot detects CF certs and exits cleanly (`restart: on-failure` keeps it off). Check logs to confirm:
+
+```bash
+docker compose logs certbot
+```
+
+### Certbot auto-issuance fails
+
+The dry-run passed but the real issuance failed, or the dry-run itself failed. Ensure DNS for your domain points to the server and port 80 is reachable from the internet. Fix the issue, then restart certbot to retry:
+
+```bash
+docker compose restart certbot
+```
 
 ### Certificate not picking up after renewal
 
