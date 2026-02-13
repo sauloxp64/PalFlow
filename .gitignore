@@ -1,0 +1,12 @@
+# Environment
+.env
+
+# TLS certificates — track folders via .gitkeep only
+certs/**
+!certs/**/
+!certs/**/.gitkeep
+
+# ACME challenge files — track folder via .gitkeep only
+acme-webroot/**
+!acme-webroot/.gitkeep
+

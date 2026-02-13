@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PalFlow – Breeding Planner</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #0d1117;
+  color: #c9d1d9;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Dot grid background */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(circle, #21262d 1px, transparent 1px);
+  background-size: 24px 24px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Controls Bar ── */
+#controls {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 56px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+  z-index: 1000;
+}
+
+#controls .logo {
+  font-size: 18px;
+  font-weight: 700;
+  color: #58a6ff;
+  letter-spacing: -0.5px;
+  white-space: nowrap;
+}
+
+#controls .logo span { color: #f0883e; }
+
+#controls select {
+  background: #0d1117;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  min-width: 180px;
+}
+
+#controls select:focus { outline: none; border-color: #58a6ff; }
+
+.ctrl-btn {
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.ctrl-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+.ctrl-btn.active { background: #58a6ff; color: #0d1117; border-color: #58a6ff; }
+
+.ctrl-sep {
+  width: 1px;
+  height: 28px;
+  background: #30363d;
+}
+
+.path-badge {
+  font-size: 11px;
+  color: #3fb950;
+  background: rgba(63,185,80,0.12);
+  border: 1px solid rgba(63,185,80,0.3);
+  border-radius: 10px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+/* ── Viewport & Canvas ── */
+#viewport {
+  position: fixed;
+  top: 56px; left: 0; right: 0; bottom: 0;
+  overflow: hidden;
+  cursor: grab;
+  z-index: 1;
+}
+
+#viewport:active { cursor: grabbing; }
+
+#canvas {
+  position: absolute;
+  top: 0; left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* SVG layer */
+#svg-layer {
+  position: absolute;
+  top: 0; left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+#edges-group path {
+  fill: none;
+  stroke: #30508a;
+  stroke-width: 2.2;
+  transition: stroke 0.2s;
+}
+
+#edges-group path.recommended {
+  stroke: #58a6ff;
+  stroke-width: 2.8;
+}
+
+#merge-group g { pointer-events: all; cursor: pointer; }
+
+#merge-group circle {
+  fill: #161b22;
+  stroke: #30508a;
+  stroke-width: 2;
+  transition: all 0.2s;
+}
+
+#merge-group circle.recommended {
+  stroke: #58a6ff;
+  stroke-width: 2.4;
+}
+
+#merge-group text {
+  fill: #58a6ff;
+  font-size: 16px;
+  font-weight: bold;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+#merge-group g:hover circle {
+  fill: #1c2333;
+  stroke: #58a6ff;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 6px rgba(88,166,255,0.4));
+}
+
+/* ── Cards ── */
+#cards-layer {
+  position: absolute;
+  top: 0; left: 0;
+}
+
+.pal-card {
+  position: absolute;
+  width: 110px;
+  height: 110px;
+  background: #161b22;
+  border: 1.5px solid #30363d;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 6px 6px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  user-select: none;
+}
+
+.pal-card:hover {
+  border-color: #58a6ff;
+  box-shadow: 0 0 12px rgba(88,166,255,0.25);
+}
+
+.pal-card.target {
+  border-color: #f0883e;
+  box-shadow: 0 0 14px rgba(240,136,62,0.3);
+}
+
+.pal-card.target:hover {
+  border-color: #f0883e;
+  box-shadow: 0 0 18px rgba(240,136,62,0.45);
+}
+
+.pal-card img {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+  image-rendering: auto;
+  pointer-events: none;
+}
+
+.pal-card .pal-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e6edf3;
+  text-align: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.pal-card .pal-tag {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  line-height: 1.3;
+}
+
+.pal-tag.bred {
+  background: rgba(88,166,255,0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(88,166,255,0.25);
+}
+
+.pal-tag.base {
+  background: rgba(63,185,80,0.12);
+  color: #3fb950;
+  border: 1px solid rgba(63,185,80,0.25);
+}
+
+.pal-tag.target-tag {
+  background: rgba(240,136,62,0.15);
+  color: #f0883e;
+  border: 1px solid rgba(240,136,62,0.3);
+}
+
+/* ── Tooltip ── */
+#tooltip {
+  position: fixed;
+  z-index: 2000;
+  background: #1c2333;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  white-space: nowrap;
+}
+
+#tooltip.visible { opacity: 1; }
+
+#tooltip .tp-parent { color: #3fb950; font-weight: 600; }
+#tooltip .tp-plus { color: #8b949e; margin: 0 3px; }
+#tooltip .tp-arrow { color: #8b949e; margin: 0 5px; }
+#tooltip .tp-child { color: #f0883e; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- Controls Bar -->
+<div id="controls">
+  <div class="logo">Pal<span>Flow</span></div>
+  <div class="ctrl-sep"></div>
+  <label style="font-size:13px;color:#8b949e;">Target:</label>
+  <select id="target-select"></select>
+  <div class="ctrl-sep"></div>
+  <button class="ctrl-btn active" id="btn-tree">Tree</button>
+  <button class="ctrl-btn" id="btn-radial">Radial</button>
+  <div class="ctrl-sep"></div>
+  <button class="ctrl-btn" id="btn-reset">Reset View</button>
+  <span class="path-badge" id="path-badge">Recommended path</span>
+</div>
+
+<!-- Viewport -->
+<div id="viewport">
+  <div id="canvas">
+    <svg id="svg-layer" width="1" height="1">
+      <g id="edges-group"></g>
+      <g id="merge-group"></g>
+    </svg>
+    <div id="cards-layer"></div>
+  </div>
+</div>
+
+<!-- Tooltip -->
+<div id="tooltip"></div>
+
+<script>
+// ════════════════════════════════════════════════════
+//  VALIDATED BREEDING DATA  (full replacement)
+//  Each entry: "Child": [["ParentA","ParentB"]]
+//  Base (capture-only) pals have no entry here.
+// ════════════════════════════════════════════════════
+const BREEDING_DATA = {
+  // ── Core hub (Relaxaurus-centric) ──
+  "Jormuntide": [["Relaxaurus","Elizabee"]],       // 1
+  "Incineram": [["Relaxaurus","Mozzarina"]],        // 2
+  "Helzephyr": [["Relaxaurus","Frostallion"]],      // 3
+  "Kitsun": [["Relaxaurus","Hoocrates"]],           // 4
+  "Knocklem": [["Relaxaurus","Faleris Aqua"]],      // 16
+
+  // ── Anubis branch ──
+  "Anubis": [["Vanwyrm","Cinnamoth"]],              // 5
+  "Bastigor": [["Frostallion","Anubis"]],           // 7
+
+  // ── Azurmane branch ──
+  "Azurmane": [["Jormuntide","Cinnamoth"]],         // 9
+
+  // ── Blazehowl / Jormuntide Ignis chain ──
+  "Blazehowl": [["Incineram","Kitsun"]],            // 10
+  "Jormuntide Ignis": [["Jormuntide","Blazehowl"]], // 14
+
+  // ── Faleris chain ──
+  "Faleris": [["Vanwyrm","Anubis"]],                // 8
+  "Faleris Aqua": [["Jormuntide","Faleris"]],       // 15
+
+  // ── Splatterina chain ──
+  "Omascul": [["Nitewing","Dinossom"]],             // 6
+  "Splatterina": [["Omascul","Dinossom"]],          // 11
+
+  // ── Frostallion Noct chain ──
+  "Frostallion Noct": [["Frostallion","Helzephyr"]],// 12
+
+  // ── Optimized Braloha (Anubis + Frostallion Noct) ──
+  "Braloha": [["Anubis","Frostallion Noct"]],       // 17
+
+  // ── Lyleen extension ──
+  "Mossanda": [["Incineram","Relaxaurus"]],         // 18
+  "Petallia": [["Dinossom","Splatterina"]],         // 19
+  "Lyleen": [["Mossanda","Petallia"]],              // 20
+
+  // ── Celesdir extension ──
+  "Gildane": [["Incineram","Nitewing"]],            // 21
+  "Celesdir": [["Gildane","Eikthyrdeer Terra"]],    // 22
+
+  // ── Grizzbolt chain (bred, not captured) ──
+  "Rayhound": [["Direhowl","Nitewing"]],            // 23 (new)
+  "Grizzbolt": [["Mossanda","Rayhound"]],           // 24 (new)
+
+  // ── Orserk / Astegon / Shadowbeak (via bred Grizzbolt) ──
+  "Orserk": [["Relaxaurus","Grizzbolt"]],           // 25
+  "Astegon": [["Orserk","Grizzbolt"]],              // 26
+  "Shadowbeak": [["Astegon","Kitsun"]]              // 13
+};
+
+// ════════════════════════════════════════════════════
+//  BASE NODES (G0 capture roots) & TARGETS
+// ════════════════════════════════════════════════════
+const BASE_NODES = [
+  "Relaxaurus","Frostallion","Elizabee","Vanwyrm","Cinnamoth",
+  "Mozzarina","Nitewing","Dinossom","Hoocrates",
+  "Eikthyrdeer Terra","Direhowl"
+];
+
+const TARGETS = [
+  "Shadowbeak","Jormuntide Ignis","Jormuntide","Incineram","Anubis",
+  "Splatterina","Faleris","Faleris Aqua","Knocklem","Bastigor","Braloha",
+  "Azurmane","Frostallion Noct","Lyleen","Celesdir","Grizzbolt"
+];
+
+// ════════════════════════════════════════════════════
+//  GENERATION COMPUTATION (topological from base)
+// ════════════════════════════════════════════════════
+const GENERATION = {};
+BASE_NODES.forEach(n => GENERATION[n] = 0);
+{
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [child, recipes] of Object.entries(BREEDING_DATA)) {
+      if (GENERATION[child] !== undefined) continue;
+      const [pA, pB] = recipes[0];
+      if (GENERATION[pA] !== undefined && GENERATION[pB] !== undefined) {
+        GENERATION[child] = Math.max(GENERATION[pA], GENERATION[pB]) + 1;
+        changed = true;
+      }
+    }
+  }
+}
+
+function isTarget(name) { return TARGETS.includes(name); }
+function isBase(name) { return BASE_NODES.includes(name); }
+function getGen(name) { return GENERATION[name] !== undefined ? GENERATION[name] : '?'; }
+
+// ════════════════════════════════════════════════════
+//  TREE BUILDER
+// ════════════════════════════════════════════════════
+let nodeIdCounter = 0;
+
+function buildTree(target, visited) {
+  if (!visited) visited = new Set();
+  const id = nodeIdCounter++;
+  const node = { id, name: target, depth: 0, x: 0, y: 0, children: null };
+
+  if (visited.has(target)) return node;
+  visited.add(target);
+
+  const recipes = BREEDING_DATA[target];
+  if (!recipes || recipes.length === 0) return node;
+
+  // Pick the recommended (first) pair
+  const [pA, pB] = recipes[0];
+  const parentA = buildTree(pA, visited);
+  const parentB = buildTree(pB, visited);
+  const mergeId = nodeIdCounter++;
+
+  node.children = {
+    parentA,
+    parentB,
+    mergeId,
+    mergeX: 0,
+    mergeY: 0
+  };
+
+  return node;
+}
+
+function getMaxDepth(node) {
+  if (!node.children) return 0;
+  return 1 + Math.max(getMaxDepth(node.children.parentA), getMaxDepth(node.children.parentB));
+}
+
+function getLeafCount(node) {
+  if (!node.children) return 1;
+  return getLeafCount(node.children.parentA) + getLeafCount(node.children.parentB);
+}
+
+// ════════════════════════════════════════════════════
+//  LAYOUT A: Left-to-Right Tree
+// ════════════════════════════════════════════════════
+const COL_SPACING = 260;
+const ROW_SPACING = 140;
+
+function layoutTree(root) {
+  const maxD = getMaxDepth(root);
+  let leafIndex = 0;
+
+  function assignDepths(node, depth) {
+    node.depth = depth;
+    if (node.children) {
+      assignDepths(node.children.parentA, depth + 1);
+      assignDepths(node.children.parentB, depth + 1);
+    }
+  }
+  assignDepths(root, 0);
+
+  function assignPositions(node) {
+    node.x = (maxD - node.depth) * COL_SPACING;
+    if (!node.children) {
+      node.y = leafIndex * ROW_SPACING;
+      leafIndex++;
+    } else {
+      assignPositions(node.children.parentA);
+      assignPositions(node.children.parentB);
+      node.y = (node.children.parentA.y + node.children.parentB.y) / 2;
+
+      // Merge node: midpoint of parents, lerped 65% toward child
+      const midX = (node.children.parentA.x + node.children.parentB.x) / 2;
+      const midY = (node.children.parentA.y + node.children.parentB.y) / 2;
+      node.children.mergeX = midX + (node.x - midX) * 0.65;
+      node.children.mergeY = midY + (node.y - midY) * 0.65;
+    }
+  }
+  assignPositions(root);
+  return root;
+}
+
+// ════════════════════════════════════════════════════
+//  LAYOUT B: Radial Mind Map
+// ════════════════════════════════════════════════════
+const RING_SPACING = 220;
+
+function layoutRadial(root) {
+  root.x = 0;
+  root.y = 0;
+  root.depth = 0;
+
+  function assignDepths(node, depth) {
+    node.depth = depth;
+    if (node.children) {
+      assignDepths(node.children.parentA, depth + 1);
+      assignDepths(node.children.parentB, depth + 1);
+    }
+  }
+  assignDepths(root, 0);
+
+  function layout(node, angleStart, angleEnd) {
+    if (!node.children) return;
+
+    const ring = node.depth + 1;
+    const r = ring * RING_SPACING;
+    const totalLeaves = getLeafCount(node.children.parentA) + getLeafCount(node.children.parentB);
+    const leavesA = getLeafCount(node.children.parentA);
+    const leavesB = getLeafCount(node.children.parentB);
+
+    const spanA = (angleEnd - angleStart) * (leavesA / totalLeaves);
+    const spanB = (angleEnd - angleStart) * (leavesB / totalLeaves);
+
+    const midA = angleStart + spanA / 2;
+    const midB = angleStart + spanA + spanB / 2;
+
+    node.children.parentA.x = Math.cos(midA) * r;
+    node.children.parentA.y = Math.sin(midA) * r;
+    node.children.parentB.x = Math.cos(midB) * r;
+    node.children.parentB.y = Math.sin(midB) * r;
+
+    // Merge node
+    const midX = (node.children.parentA.x + node.children.parentB.x) / 2;
+    const midY = (node.children.parentA.y + node.children.parentB.y) / 2;
+    node.children.mergeX = midX + (node.x - midX) * 0.65;
+    node.children.mergeY = midY + (node.y - midY) * 0.65;
+
+    layout(node.children.parentA, angleStart, angleStart + spanA);
+    layout(node.children.parentB, angleStart + spanA, angleStart + spanA + spanB);
+  }
+
+  layout(root, -Math.PI, Math.PI);
+  return root;
+}
+
+// ════════════════════════════════════════════════════
+//  RENDERING
+// ════════════════════════════════════════════════════
+const CARD_W = 110;
+const CARD_H = 110;
+const MERGE_R = 14;
+
+let currentLayout = 'tree'; // 'tree' | 'radial'
+let currentTarget = 'Shadowbeak';
+let pan = { x: 0, y: 0 };
+let zoom = 1;
+
+const viewport = document.getElementById('viewport');
+const canvas = document.getElementById('canvas');
+const svgLayer = document.getElementById('svg-layer');
+const edgesGroup = document.getElementById('edges-group');
+const mergeGroup = document.getElementById('merge-group');
+const cardsLayer = document.getElementById('cards-layer');
+const tooltip = document.getElementById('tooltip');
+const targetSelect = document.getElementById('target-select');
+
+// Populate dropdown (targets sorted: generation asc, then alphabetical)
+[...TARGETS].sort((a, b) => {
+  const gd = getGen(a) - getGen(b);
+  return gd !== 0 ? gd : a.localeCompare(b);
+}).forEach(name => {
+  const opt = document.createElement('option');
+  opt.value = name;
+  opt.textContent = name + ' (G' + getGen(name) + ')';
+  if (name === currentTarget) opt.selected = true;
+  targetSelect.appendChild(opt);
+});
+
+targetSelect.addEventListener('change', () => {
+  currentTarget = targetSelect.value;
+  rebuild();
+});
+
+document.getElementById('btn-tree').addEventListener('click', () => {
+  currentLayout = 'tree';
+  document.getElementById('btn-tree').classList.add('active');
+  document.getElementById('btn-radial').classList.remove('active');
+  rebuild();
+});
+
+document.getElementById('btn-radial').addEventListener('click', () => {
+  currentLayout = 'radial';
+  document.getElementById('btn-radial').classList.add('active');
+  document.getElementById('btn-tree').classList.remove('active');
+  rebuild();
+});
+
+document.getElementById('btn-reset').addEventListener('click', () => autoFit());
+
+function iconSrc(name) {
+  return 'assets/icons/' + encodeURIComponent(name) + '.png';
+}
+
+function collectNodes(node, list) {
+  list = list || [];
+  list.push(node);
+  if (node.children) {
+    collectNodes(node.children.parentA, list);
+    collectNodes(node.children.parentB, list);
+  }
+  return list;
+}
+
+function rebuild() {
+  nodeIdCounter = 0;
+  const root = buildTree(currentTarget);
+  if (currentLayout === 'tree') {
+    layoutTree(root);
+  } else {
+    layoutRadial(root);
+  }
+  render(root);
+  setTimeout(() => autoFit(), 30);
+}
+
+function render(root) {
+  edgesGroup.innerHTML = '';
+  mergeGroup.innerHTML = '';
+  cardsLayer.innerHTML = '';
+
+  const nodes = collectNodes(root);
+
+  // Determine recommended depth info
+  const maxD = getMaxDepth(root);
+  const badge = document.getElementById('path-badge');
+  const steps = maxD;
+  badge.textContent = steps === 0
+    ? 'Base Pal (no breeding needed)'
+    : steps === 1
+      ? 'Recommended \u00b7 1 step'
+      : 'Recommended \u00b7 ' + steps + ' steps';
+
+  // Draw edges and merge nodes (depth-first)
+  function drawEdges(node) {
+    if (!node.children) return;
+    const { parentA, parentB, mergeId, mergeX, mergeY } = node.children;
+
+    // Connection points: card edges
+    const childCx = node.x + CARD_W / 2;
+    const childCy = node.y + CARD_H / 2;
+    const pACx = parentA.x + CARD_W / 2;
+    const pACy = parentA.y + CARD_H / 2;
+    const pBCx = parentB.x + CARD_W / 2;
+    const pBCy = parentB.y + CARD_H / 2;
+
+    // Edge from card edge toward merge
+    function cardEdgePoint(cx, cy, tx, ty) {
+      const dx = tx - cx, dy = ty - cy;
+      const angle = Math.atan2(dy, dx);
+      // Use closest edge midpoint
+      const hw = CARD_W / 2, hh = CARD_H / 2;
+      let ex, ey;
+      if (Math.abs(Math.cos(angle)) * hh > Math.abs(Math.sin(angle)) * hw) {
+        ex = cx + Math.sign(Math.cos(angle)) * hw;
+        ey = cy + Math.tan(angle) * Math.sign(Math.cos(angle)) * hw;
+      } else {
+        ey = cy + Math.sign(Math.sin(angle)) * hh;
+        ex = cx + (1 / Math.tan(angle)) * Math.sign(Math.sin(angle)) * hh;
+      }
+      return { x: ex, y: ey };
+    }
+
+    const pAE = cardEdgePoint(pACx, pACy, mergeX, mergeY);
+    const pBE = cardEdgePoint(pBCx, pBCy, mergeX, mergeY);
+    const cE = cardEdgePoint(childCx, childCy, mergeX, mergeY);
+
+    if (currentLayout === 'tree') {
+      // Cubic bezier S-curves with horizontal tangents
+      function hBezier(x1, y1, x2, y2) {
+        const cpOff = Math.abs(x2 - x1) * 0.45;
+        return `M${x1},${y1} C${x1 + cpOff},${y1} ${x2 - cpOff},${y2} ${x2},${y2}`;
+      }
+      addPath(hBezier(pAE.x, pAE.y, mergeX, mergeY), true);
+      addPath(hBezier(pBE.x, pBE.y, mergeX, mergeY), true);
+      addPath(hBezier(mergeX, mergeY, cE.x, cE.y), true);
+    } else {
+      // Straight lines for radial
+      addPath(`M${pAE.x},${pAE.y} L${mergeX},${mergeY}`, true);
+      addPath(`M${pBE.x},${pBE.y} L${mergeX},${mergeY}`, true);
+      addPath(`M${mergeX},${mergeY} L${cE.x},${cE.y}`, true);
+    }
+
+    // Merge node
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('data-pa', parentA.name);
+    g.setAttribute('data-pb', parentB.name);
+    g.setAttribute('data-child', node.name);
+
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', mergeX);
+    circle.setAttribute('cy', mergeY);
+    circle.setAttribute('r', MERGE_R);
+    circle.classList.add('recommended');
+
+    const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txt.setAttribute('x', mergeX);
+    txt.setAttribute('y', mergeY);
+    txt.textContent = '\u2295';
+
+    g.appendChild(circle);
+    g.appendChild(txt);
+
+    g.addEventListener('mouseenter', (e) => showTooltip(e, parentA.name, parentB.name, node.name));
+    g.addEventListener('mousemove', (e) => moveTooltip(e));
+    g.addEventListener('mouseleave', hideTooltip);
+
+    mergeGroup.appendChild(g);
+
+    drawEdges(parentA);
+    drawEdges(parentB);
+  }
+
+  function addPath(d, recommended) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    if (recommended) path.classList.add('recommended');
+    edgesGroup.appendChild(path);
+  }
+
+  drawEdges(root);
+
+  // Draw cards
+  nodes.forEach(n => {
+    const card = document.createElement('div');
+    card.className = 'pal-card';
+    if (n.name === currentTarget) card.classList.add('target');
+
+    const img = document.createElement('img');
+    img.src = iconSrc(n.name);
+    img.alt = n.name;
+    img.draggable = false;
+    img.onerror = function() {
+      this.style.display = 'none';
+    };
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'pal-name';
+    nameEl.textContent = n.name;
+    nameEl.title = n.name;
+
+    const tag = document.createElement('div');
+    const gen = getGen(n.name);
+    const tagType = isTarget(n.name) ? 'target-tag' : (isBase(n.name) ? 'base' : 'bred');
+    tag.className = 'pal-tag ' + tagType;
+    tag.textContent = 'G' + gen + ' ' + (isTarget(n.name) ? 'target' : (isBase(n.name) ? 'base' : 'bred'));
+
+    card.appendChild(img);
+    card.appendChild(nameEl);
+    card.appendChild(tag);
+
+    card.style.left = n.x + 'px';
+    card.style.top = n.y + 'px';
+
+    cardsLayer.appendChild(card);
+  });
+}
+
+// ════════════════════════════════════════════════════
+//  TOOLTIP
+// ════════════════════════════════════════════════════
+function showTooltip(e, pA, pB, child) {
+  tooltip.innerHTML =
+    '<span class="tp-parent">' + escHtml(pA) + '</span>' +
+    '<span class="tp-plus">+</span>' +
+    '<span class="tp-parent">' + escHtml(pB) + '</span>' +
+    '<span class="tp-arrow">\u2192</span>' +
+    '<span class="tp-child">' + escHtml(child) + '</span>';
+  tooltip.classList.add('visible');
+  moveTooltip(e);
+}
+
+function moveTooltip(e) {
+  const pad = 14;
+  let x = e.clientX + pad;
+  let y = e.clientY + pad;
+  const rect = tooltip.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth - 8) x = e.clientX - rect.width - pad;
+  if (y + rect.height > window.innerHeight - 8) y = e.clientY - rect.height - pad;
+  tooltip.style.left = x + 'px';
+  tooltip.style.top = y + 'px';
+}
+
+function hideTooltip() {
+  tooltip.classList.remove('visible');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ════════════════════════════════════════════════════
+//  PAN & ZOOM
+// ════════════════════════════════════════════════════
+function applyTransform() {
+  canvas.style.transform = 'translate(' + pan.x + 'px,' + pan.y + 'px) scale(' + zoom + ')';
+}
+
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+
+viewport.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  isPanning = true;
+  panStart.x = e.clientX - pan.x;
+  panStart.y = e.clientY - pan.y;
+  viewport.setPointerCapture(e.pointerId);
+});
+
+viewport.addEventListener('pointermove', (e) => {
+  if (!isPanning) return;
+  pan.x = e.clientX - panStart.x;
+  pan.y = e.clientY - panStart.y;
+  applyTransform();
+});
+
+viewport.addEventListener('pointerup', () => { isPanning = false; });
+viewport.addEventListener('pointercancel', () => { isPanning = false; });
+
+viewport.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = viewport.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  const oldZoom = zoom;
+  const delta = -e.deltaY * 0.001;
+  zoom = Math.min(3, Math.max(0.15, zoom * (1 + delta)));
+
+  // Zoom toward cursor
+  pan.x = mx - (mx - pan.x) * (zoom / oldZoom);
+  pan.y = my - (my - pan.y) * (zoom / oldZoom);
+
+  applyTransform();
+}, { passive: false });
+
+function autoFit() {
+  const cards = cardsLayer.children;
+  if (cards.length === 0) return;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of cards) {
+    const cx = parseFloat(c.style.left);
+    const cy = parseFloat(c.style.top);
+    if (cx < minX) minX = cx;
+    if (cy < minY) minY = cy;
+    if (cx + CARD_W > maxX) maxX = cx + CARD_W;
+    if (cy + CARD_H > maxY) maxY = cy + CARD_H;
+  }
+
+  const vw = viewport.clientWidth;
+  const vh = viewport.clientHeight;
+  const treW = maxX - minX;
+  const treH = maxY - minY;
+  const padX = 80, padY = 80;
+
+  zoom = Math.min(1.2, Math.min((vw - padX * 2) / treW, (vh - padY * 2) / treH));
+  zoom = Math.max(0.2, zoom);
+
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+
+  pan.x = vw / 2 - centerX * zoom;
+  pan.y = vh / 2 - centerY * zoom;
+
+  applyTransform();
+}
+
+// ════════════════════════════════════════════════════
+//  DAG VALIDATION (dev-only, console output)
+// ════════════════════════════════════════════════════
+(function validateDAG() {
+  const allNodes = new Set(BASE_NODES);
+  for (const [child, recipes] of Object.entries(BREEDING_DATA)) {
+    allNodes.add(child);
+    recipes[0].forEach(p => allNodes.add(p));
+  }
+  let errors = 0;
+
+  // Check all edge endpoints exist as known nodes
+  for (const [child, recipes] of Object.entries(BREEDING_DATA)) {
+    const [pA, pB] = recipes[0];
+    if (!allNodes.has(pA)) { console.error('[DAG] Unknown parent:', pA, 'in recipe for', child); errors++; }
+    if (!allNodes.has(pB)) { console.error('[DAG] Unknown parent:', pB, 'in recipe for', child); errors++; }
+  }
+
+  // Check for cycles via DFS
+  function hasCycle(node, path) {
+    if (path.has(node)) return true;
+    const recipe = BREEDING_DATA[node];
+    if (!recipe) return false;
+    path.add(node);
+    const [pA, pB] = recipe[0];
+    const result = hasCycle(pA, path) || hasCycle(pB, path);
+    path.delete(node);
+    return result;
+  }
+  for (const child of Object.keys(BREEDING_DATA)) {
+    if (hasCycle(child, new Set())) { console.error('[DAG] Cycle detected involving:', child); errors++; }
+  }
+
+  // Check all targets are reachable (have computed generation)
+  TARGETS.forEach(t => {
+    if (GENERATION[t] === undefined) { console.error('[DAG] Target unreachable from base nodes:', t); errors++; }
+  });
+
+  if (errors === 0) {
+    console.log('%c[DAG] Validation passed: ' + allNodes.size + ' nodes, ' +
+      Object.keys(BREEDING_DATA).length + ' edges, 0 errors', 'color:#3fb950');
+    console.table(Object.entries(GENERATION).sort((a,b) => a[1]-b[1]).map(
+      ([name,gen]) => ({ name, gen: 'G'+gen, type: isTarget(name)?'TARGET':isBase(name)?'base':'bred' })
+    ));
+  }
+})();
+
+// ════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════
+rebuild();
+
+</script>
+</body>
+</html>

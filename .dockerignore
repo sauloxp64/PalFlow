@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.dockerignore
+Dockerfile
+docker-compose.yml
+edge/
+certbot/
+certs/
+acme-webroot/
+*.md
+*.sh

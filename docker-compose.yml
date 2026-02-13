@@ -1,0 +1,32 @@
+services:
+  palflow:
+    build: .
+    restart: unless-stopped
+    # Internal only — no public ports
+
+  edge:
+    build: ./edge
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - PALFLOW_DOMAIN=${PALFLOW_DOMAIN}
+      - TLS_MODE=${TLS_MODE:-auto}
+      - ALLOW_SELF_SIGNED=${ALLOW_SELF_SIGNED:-0}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+    volumes:
+      - ./certs/letsencrypt:/etc/letsencrypt
+      - ./certs/cloudflare:/etc/nginx/cf_certs:ro
+      - ./acme-webroot:/var/www/certbot
+    depends_on:
+      - palflow
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./certs/letsencrypt:/etc/letsencrypt
+      - ./acme-webroot:/var/www/certbot
+      - ./certbot/renew.sh:/opt/renew.sh:ro
+    entrypoint: ["/bin/sh", "/opt/renew.sh"]
+    restart: unless-stopped
